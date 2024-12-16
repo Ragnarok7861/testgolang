@@ -68,7 +68,6 @@ func main() {
 	if err := app.initDBConnection(); err != nil {
 		log.Fatalf("Ошибка при подключении к базе данных: %v", err)
 	}
-	defer app.DB.Close() // Закрываем соединение с базой данных после завершения работы
-
+	defer app.DB.Close()
 	app.startServer(":8080")
 }
