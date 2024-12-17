@@ -1,73 +1,65 @@
 package main
 
 import (
-	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
+	"fmt"
 	"log"
-	"net/http"
 
-	"golang.org/x/crypto/bcrypt" // Для хэширования токенов
+	_ "github.com/lib/pq"
 )
 
 type App struct {
 	DB *sql.DB
 }
 
-const secretKey = "testgosecretkey24" // Секретный ключ для подписи JWT токенов
-
-// Функция для генерации произвольного Refresh токена
-func generateRefreshToken() (string, error) {
-	token := make([]byte, 32)
-	_, err := rand.Read(token)
-	if err != nil {
-		return "", err
-	}
-
-	// Кодируем токен в формат base64
-	refreshToken := base64.StdEncoding.EncodeToString(token)
-	return refreshToken, nil
-}
-
-// Функция для хэширования Refresh токена с использованием bcrypt
-func hashRefreshToken(refreshToken string) (string, error) {
-	hashedToken, err := bcrypt.GenerateFromPassword([]byte(refreshToken), bcrypt.DefaultCost)
-	if err != nil {
-		return "", err
-	}
-	return string(hashedToken), nil
-}
-
-// initDBConnection — функция для подключения к базе данных
 func (a *App) initDBConnection() error {
-	db, err := InitDB() // Подключение к базе данных (функция из db.go)
+	connStr := "user=postgres password=7861 dbname=testgo sslmode=disable"
+	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return err
 	}
 	a.DB = db
-	return nil
+	_, err = a.DB.Exec(`CREATE TABLE IF NOT EXISTS tokens (
+		user_id TEXT PRIMARY KEY,
+		refresh_token TEXT
+	)`)
+	return err
 }
 
-// setupRoutes — функция для регистрации маршрутов
-func (a *App) setupRoutes() {
-	http.HandleFunc("/token", a.handleTokenRequest)   // Маршрут для получения токена
-	http.HandleFunc("/refresh", a.handleRefreshToken) // Маршрут для обновления токена
+func (a *App) SaveRefreshToken(userID, token string) error {
+	_, err := a.DB.Exec(`INSERT INTO tokens (user_id, refresh_token) 
+                         VALUES ($1, $2) 
+                         ON CONFLICT (user_id) DO UPDATE SET refresh_token = EXCLUDED.refresh_token`,
+		userID, token)
+	return err
 }
 
-// startServer — запуск сервера
-func (a *App) startServer(addr string) {
-	a.setupRoutes() // Регистрация маршрутов
-	log.Printf("Сервер запущен на порту %s", addr)
-	log.Fatal(http.ListenAndServe(addr, nil)) // Запуск сервера
+func (a *App) GetUserIDByRefreshToken(userID string) (string, error) {
+	var token string
+	err := a.DB.QueryRow(`SELECT refresh_token FROM tokens WHERE user_id = $1`, userID).Scan(&token)
+	if err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
 func main() {
+	// Инициализация приложения
 	app := &App{}
 
-	// Подключаемся к базе данных
-	if err := app.initDBConnection(); err != nil {
-		log.Fatalf("Ошибка при подключении к базе данных: %v", err)
+	// Подключение к базе данных
+	err := app.initDBConnection()
+	if err != nil {
+		log.Fatalf("Не удалось подключиться к базе данных: %v", err)
 	}
-	defer app.DB.Close()
-	app.startServer(":8080")
+
+	// Выводим сообщение, что соединение с БД установлено успешно
+	fmt.Println("Успешное подключение к базе данных!")
+
+	// Пример использования функций
+	err = app.SaveRefreshToken("user123", "some-refresh-token")
+	if err != nil {
+		log.Fatalf("Ошибка сохранения refresh token: %v", err)
+	}
+	fmt.Println("Refresh token для пользователя user123 успешно сохранен")
 }

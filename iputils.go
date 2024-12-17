@@ -1,52 +1,54 @@
 package main
 
 import (
-	"fmt"
+	"crypto/rand"
+	"encoding/base64"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
+	"golang.org/x/crypto/bcrypt"
 )
 
-// getIP возвращает IP-адрес клиента
+var secretKey = "testgosecretkey24"
+
 func getIP(r *http.Request) string {
-	forwarded := r.Header.Get("X-Forwarded-For") // Используем заголовок, если запрос идёт через прокси
+	forwarded := r.Header.Get("X-Forwarded-For")
 	if forwarded != "" {
-		return forwarded
+		ips := strings.Split(forwarded, ",")
+		return strings.TrimSpace(ips[0])
 	}
-	return r.RemoteAddr // Получаем IP напрямую
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
 }
 
-// generateAccessToken генерирует JWT токен для пользователя с привязкой к IP-адресу
 func generateAccessToken(userID, ipAddress string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS512, jwt.MapClaims{
 		"userID": userID,
-		"ip":     ipAddress,                            // Привязка к IP-адресу
-		"exp":    time.Now().Add(time.Hour * 1).Unix(), // Токен действует 1 час
+		"ip":     ipAddress,
+		"exp":    time.Now().Add(time.Hour * 1).Unix(),
 	})
-	return token.SignedString([]byte(secretKey)) // secretKey берётся из глобальной переменной
+	return token.SignedString([]byte(secretKey))
 }
 
-// validateToken проверяет валидность токена и соответствие IP-адреса
-func validateToken(r *http.Request, tokenString string) (bool, error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return []byte(secretKey), nil
-	})
-
-	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		// Получаем IP-адрес из токена
-		tokenIP := claims["ip"].(string)
-
-		// Текущий IP-адрес клиента
-		currentIP := getIP(r)
-
-		// Сравниваем IP-адреса
-		if tokenIP != currentIP {
-			return false, fmt.Errorf("IP-адрес не совпадает")
-		}
-
-		return true, nil
-	} else {
-		return false, err
+func generateBase64RefreshToken() (string, error) {
+	token := make([]byte, 32)
+	_, err := rand.Read(token)
+	if err != nil {
+		return "", err
 	}
+	return base64.StdEncoding.EncodeToString(token), nil
+}
+
+func hashRefreshToken(token string) (string, error) {
+	hashed, err := bcrypt.GenerateFromPassword([]byte(token), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hashed), nil
 }
